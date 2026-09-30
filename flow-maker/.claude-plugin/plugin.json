@@ -1,0 +1,8 @@
+{
+  "name": "flow-maker",
+  "description": "Intent to implementation: ready, then go. (Based on dryforge by prekuter)",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "keywords": ["harness", "intent", "spec", "planning", "verification", "autonomy"],
+  "author": { "name": "JDS" }
+}

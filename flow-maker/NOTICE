@@ -1,0 +1,11 @@
+flow-maker
+Copyright 2026 JDS
+
+This product is a modified version of dryforge
+(https://github.com/prekuter/dryforge), Copyright prekuter,
+licensed under the Apache License, Version 2.0.
+
+Modifications by JDS:
+- Renamed the plugin from "dryforge" to "flow-maker".
+- Renamed the working directory ".dryforge/" to ".flow-maker/" and
+  related identifiers in skills and assets.

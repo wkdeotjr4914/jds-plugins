@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flow-maker go - live workflow</title>
+<!--
+  Live workflow viewer for flow-maker `go`.
+  Static file: go copies it to .flow-maker/workflow.html once per run and never edits it.
+  Live data: go rewrites .flow-maker/workflow-state.js (window.__FLOW_MAKER_WORKFLOW__ = {...}).
+  This page reloads that script every few seconds, so it also works when opened via file://.
+  Schema: skills/go/references/workflow-view.md
+-->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xyflow/react@12.12.0/dist/style.css">
+<style>
+:root {
+  --bg: #F1F3F6; --surface: #FFFFFF; --ink: #18202D; --muted: #5A6476; --line: #D3D9E1;
+  --grid: #C9D0DA; --edge: #8C97A8; --accent: #C96A04; --accent-soft: #FCEBD3;
+  --ok: #1F8A4C; --ok-soft: #DDF3E6; --warn: #A86B00; --warn-soft: #FBEFCF;
+  --bad: #C0392B; --bad-soft: #F9DEDA; --info: #0B7F82; --info-soft: #D8F0F0;
+  --idle-soft: #EEF1F5;
+  --font: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11151B; --surface: #1A2029; --ink: #E6EAF0; --muted: #9AA4B3; --line: #2D3542;
+    --grid: #2A313C; --edge: #6D788A; --accent: #F59E0B; --accent-soft: #3A2A10;
+    --ok: #4CC47F; --ok-soft: #173424; --warn: #E8B040; --warn-soft: #3A2E12;
+    --bad: #F0776A; --bad-soft: #3B1C19; --info: #35B8BA; --info-soft: #133234;
+    --idle-soft: #212833;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.55 var(--font); display: flex; flex-direction: column; }
+header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--surface); }
+header h1 { font-size: 17px; margin: 0; font-weight: 700; }
+.pill { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: var(--idle-soft); color: var(--muted); }
+.pill.running { background: var(--accent-soft); color: var(--accent); }
+.pill.waiting { background: var(--info-soft); color: var(--info); }
+.pill.done { background: var(--ok-soft); color: var(--ok); }
+.pill.blocked, .pill.failed { background: var(--bad-soft); color: var(--bad); }
+.now { color: var(--muted); flex: 1 1 280px; min-width: 0; }
+.meter { display: flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+.meter .bar { width: 140px; height: 6px; border-radius: 3px; background: var(--idle-soft); overflow: hidden; }
+.meter .bar i { display: block; height: 100%; background: var(--ok); transition: width .4s ease; }
+.stale { font-size: 12px; color: var(--bad); }
+main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 340px; min-height: 0; }
+@media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(420px, 1fr) auto; } }
+.canvas { position: relative; min-height: 420px; }
+aside { border-left: 1px solid var(--line); background: var(--surface); padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+@media (max-width: 860px) { aside { border-left: none; border-top: 1px solid var(--line); } }
+aside h2 { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
+aside h3 { font-size: 16px; margin: 0; }
+.detail { display: flex; flex-direction: column; gap: 8px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.checks li { font-family: var(--mono); font-size: 12px; display: flex; gap: 8px; align-items: baseline; }
+.checks code { overflow-wrap: anywhere; }
+.ex { font-weight: 600; flex: none; }
+.ex.ok { color: var(--ok); } .ex.bad { color: var(--bad); }
+.log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.log time { color: var(--muted); font-family: var(--mono); font-size: 11px; margin-right: 6px; font-variant-numeric: tabular-nums; }
+.hint { color: var(--muted); font-size: 13px; margin: 0; }
+.empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); padding: 24px; text-align: center; }
+
+.react-flow {
+  --xy-background-color: var(--bg); --xy-background-pattern-color: var(--grid);
+  --xy-edge-stroke: var(--edge); --xy-edge-stroke-width: 1.5;
+  --xy-edge-label-background-color: var(--bg); --xy-edge-label-color: var(--muted);
+  --xy-controls-button-background-color: var(--surface); --xy-controls-button-background-color-hover: var(--bg);
+  --xy-controls-button-color: var(--ink); --xy-controls-button-color-hover: var(--ink);
+  --xy-controls-button-border-color: var(--line); --xy-controls-box-shadow: none;
+  --xy-attribution-background-color: transparent;
+  --xy-node-background-color: transparent; --xy-node-border: none; --xy-node-color: var(--ink);
+  --xy-handle-background-color: transparent; --xy-handle-border-color: transparent;
+}
+.react-flow__handle { opacity: 0; width: 4px; height: 4px; min-width: 0; min-height: 0; }
+.react-flow__controls { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+
+.nd { width: 210px; border-radius: 10px; padding: 8px 12px 9px; background: var(--surface); border: 1.5px solid var(--line); display: flex; flex-direction: column; gap: 2px; cursor: pointer; }
+.nd .st { font-size: 11px; font-weight: 600; letter-spacing: .03em; display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.nd .st i { width: 8px; height: 8px; border-radius: 50%; background: var(--edge); flex: none; }
+.nd .t { font-weight: 700; font-size: 13.5px; line-height: 1.3; overflow-wrap: anywhere; }
+.nd .s { font-size: 12px; color: var(--muted); line-height: 1.35; overflow-wrap: anywhere; }
+.nd.phase { width: 190px; }
+.nd.sel { box-shadow: 0 0 0 3px var(--accent); }
+.nd.s-pending, .nd.s-skipped { background: var(--idle-soft); border-style: dashed; }
+.nd.s-skipped { opacity: .6; }
+.nd.s-running { border-color: var(--accent); background: var(--accent-soft); }
+.nd.s-running .st { color: var(--accent); } .nd.s-running .st i { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.nd.s-review, .nd.s-waiting { border-color: var(--info); background: var(--info-soft); }
+.nd.s-review .st, .nd.s-waiting .st { color: var(--info); } .nd.s-review .st i, .nd.s-waiting .st i { background: var(--info); }
+.nd.s-done { border-color: var(--ok); }
+.nd.s-done .st { color: var(--ok); } .nd.s-done .st i { background: var(--ok); }
+.nd.s-concerns { border-color: var(--warn); background: var(--warn-soft); }
+.nd.s-concerns .st { color: var(--warn); } .nd.s-concerns .st i { background: var(--warn); }
+.nd.s-blocked, .nd.s-failed { border-color: var(--bad); background: var(--bad-soft); }
+.nd.s-blocked .st, .nd.s-failed .st { color: var(--bad); } .nd.s-blocked .st i, .nd.s-failed .st i { background: var(--bad); }
+.col { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; width: 210px; padding: 0 2px; pointer-events: none; }
+@keyframes pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .nd .st i { animation: none !important; } .meter .bar i { transition: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">flow-maker</h1>
+  <span id="status" class="pill">-</span>
+  <span id="now" class="now"></span>
+  <span class="meter"><span class="bar"><i id="bar" style="width:0%"></i></span><span id="count">0 / 0</span></span>
+  <span id="stale" class="stale" hidden></span>
+</header>
+<main>
+  <div class="canvas" id="canvas"><div class="empty" id="boot">Waiting for .flow-maker/workflow-state.js ...</div></div>
+  <aside id="side"></aside>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script>
+// @xyflow/react's UMD build expects a global jsxRuntime; bridge it to React.createElement.
+window.jsxRuntime = (function () {
+  function jsx(type, props, key) {
+    var p = Object.assign({}, props);
+    if (key !== undefined) p.key = key;
+    return React.createElement(type, p);
+  }
+  return { jsx: jsx, jsxs: jsx, Fragment: React.Fragment };
+})();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/@xyflow/react@12.12.0/dist/umd/index.js"></script>
+<script>
+(function () {
+  var STATE_FILE = 'workflow-state.js';
+  var POLL_MS = 2000, POLL_DONE_MS = 15000;
+
+  // UI strings. The state file's `labels` overrides any of these, so go can show the viewer in the
+  // user's language without this file carrying anything but ASCII.
+  var DEFAULT_LABELS = {
+    pending: 'Waiting', running: 'In progress', review: 'Under review', waiting: 'Needs you',
+    done: 'Done', concerns: 'Done, with a note', blocked: 'Stuck', failed: 'Failed', skipped: 'Skipped',
+    run_running: 'Running', run_waiting: 'Waiting for you', run_blocked: 'Stuck', run_done: 'Finished', run_failed: 'Failed',
+    step: 'Step', parallel: 'side by side', tasks: 'Tasks', checks: 'Checks that ran',
+    activity: 'Recent activity', details: 'Details', depends: 'After', note: 'Note',
+    select_hint: 'Select a box in the diagram to see its details.',
+    no_state: 'Waiting for .flow-maker/workflow-state.js ...',
+    stale: 'No update for a while', updated: 'Updated'
+  };
+  var PHASE_ORDER = ['prepare', 'validate', 'base', 'scaffold', 'build', 'verify', 'docs', 'review', 'approval', 'archive', 'finish'];
+
+  var current = null, listeners = [];
+  function L(key) { var l = (current && current.labels) || {}; return l[key] || DEFAULT_LABELS[key] || key; }
+
+  // Poll the state script. A <script> tag (not fetch) keeps this working from file://.
+  function poll() {
+    var s = document.createElement('script');
+    s.src = STATE_FILE + '?r=' + Date.now();
+    s.onload = function () {
+      s.remove();
+      var next = window.__FLOW_MAKER_WORKFLOW__;
+      if (next && (!current || next.rev !== current.rev)) {
+        current = next;
+        listeners.forEach(function (fn) { fn(next); });
+      }
+      schedule();
+    };
+    s.onerror = function () { s.remove(); schedule(); };
+    document.head.appendChild(s);
+  }
+  function schedule() {
+    var done = current && (current.status === 'done' || current.status === 'failed');
+    setTimeout(poll, done ? POLL_DONE_MS : POLL_MS);
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d)) return String(iso);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function renderHeader(st) {
+    document.title = (st.title || 'flow-maker') + ' - go';
+    document.getElementById('title').textContent = st.title || 'flow-maker';
+    var pill = document.getElementById('status');
+    pill.className = 'pill ' + (st.status || '');
+    pill.textContent = L('run_' + (st.status || 'running'));
+    document.getElementById('now').textContent = st.now || '';
+    var tasks = st.tasks || [];
+    var fin = tasks.filter(function (t) { return t.status === 'done' || t.status === 'concerns' || t.status === 'skipped'; }).length;
+    document.getElementById('count').textContent = fin + ' / ' + tasks.length;
+    document.getElementById('bar').style.width = (tasks.length ? Math.round(fin * 100 / tasks.length) : 0) + '%';
+  }
+  function checkStale() {
+    var el = document.getElementById('stale');
+    if (!current || !current.updated || current.status === 'done' || current.status === 'failed') { el.hidden = true; return; }
+    var age = (Date.now() - new Date(current.updated).getTime()) / 60000;
+    el.hidden = !(age > 10);
+    el.textContent = L('stale') + ' (' + L('updated') + ' ' + fmtTime(current.updated) + ')';
+  }
+  setInterval(checkStale, 30000);
+
+  // Plain-HTML fallback when the CDN scripts could not load (offline).
+  if (!window.React || !window.ReactDOM || !window.ReactFlow) {
+    listeners.push(function (st) {
+      renderHeader(st);
+      var rows = PHASE_ORDER.map(function (id) {
+        var p = (st.phases || []).filter(function (x) { return x.id === id; })[0];
+        return p ? '<li>' + esc(p.title || id) + ' - ' + esc(L(p.status || 'pending')) + '</li>' : '';
+      }).join('') + (st.tasks || []).map(function (t) {
+        return '<li>' + esc(t.title || t.id) + ' - ' + esc(L(t.status || 'pending')) + '</li>';
+      }).join('');
+      document.getElementById('canvas').innerHTML = '<ul style="padding:24px 40px">' + rows + '</ul>';
+    });
+    poll();
+    return;
+  }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  var h = React.createElement, RF = window.ReactFlow;
+  var marker = { type: 'arrowclosed', width: 14, height: 14, color: 'var(--edge)' };
+
+  function Box(props) {
+    var d = props.data;
+    return h('div', { className: 'nd ' + (d.phase ? 'phase ' : '') + 's-' + (d.status || 'pending') + (props.selected ? ' sel' : '') },
+      h(RF.Handle, { type: 'target', position: RF.Position.Top, id: 't', isConnectable: false }),
+      h(RF.Handle, { type: 'target', position: RF.Position.Left, id: 'l', isConnectable: false }),
+      h('span', { className: 'st' }, h('i'), L(d.status || 'pending')),
+      h('span', { className: 't' }, d.title),
+      d.sub ? h('span', { className: 's' }, d.sub) : null,
+      h(RF.Handle, { type: 'source', position: RF.Position.Bottom, id: 'b', isConnectable: false }),
+      h(RF.Handle, { type: 'source', position: RF.Position.Right, id: 'r', isConnectable: false }));
+  }
+  function Col(props) { return h('div', { className: 'col' }, props.data.text); }
+  var nodeTypes = { box: Box, col: Col };
+
+  // Layout: phases run down the left; the build phase opens a grid of tasks to its right,
+  // one column per step (derived from `wave`), with dependency edges between tasks.
+  function layout(st) {
+    var nodes = [], edges = [];
+    var phases = PHASE_ORDER.map(function (id) {
+      return (st.phases || []).filter(function (p) { return p.id === id; })[0];
+    }).filter(Boolean);
+    var PY = 96, TX = 290, TW = 250, TY = 92;
+    var tasks = st.tasks || [];
+    var byWave = {};
+    tasks.forEach(function (t) { var w = t.wave || 1; (byWave[w] = byWave[w] || []).push(t); });
+    var waves = Object.keys(byWave).map(Number).sort(function (a, b) { return a - b; });
+    var buildIdx = -1;
+    phases.forEach(function (p, i) { if (p.id === 'build') buildIdx = i; });
+    var tallest = 0;
+    waves.forEach(function (w) { tallest = Math.max(tallest, byWave[w].length); });
+    var gridH = tasks.length ? 40 + tallest * TY : 0;
+
+    var y = 0;
+    phases.forEach(function (p, i) {
+      nodes.push({ id: 'p:' + p.id, type: 'box', position: { x: 0, y: y }, data: { phase: true, title: p.title || p.id, sub: p.note, status: p.status, ref: p } });
+      if (i > 0) edges.push({ id: 'pe:' + i, source: 'p:' + phases[i - 1].id, target: 'p:' + p.id, sourceHandle: 'b', targetHandle: 't', type: 'smoothstep', markerEnd: marker });
+      y += (i === buildIdx && gridH > PY) ? gridH + 24 : PY;
+    });
+
+    var buildY = buildIdx >= 0 ? buildIdx * PY : 0;
+    waves.forEach(function (w, ci) {
+      var list = byWave[w];
+      var x = TX + ci * TW;
+      var par = list.length > 1;
+      nodes.push({ id: 'c:' + w, type: 'col', position: { x: x, y: buildY - 6 }, selectable: false, draggable: false,
+        data: { text: L('step') + ' ' + (ci + 1) + (par ? ' - ' + L('parallel') : '') } });
+      list.forEach(function (t, ri) {
+        nodes.push({ id: 't:' + t.id, type: 'box', position: { x: x, y: buildY + 24 + ri * TY }, data: { title: t.title || t.id, sub: t.note, status: t.status, ref: t, task: true } });
+      });
+    });
+    var ids = {};
+    tasks.forEach(function (t) { ids[t.id] = true; });
+    tasks.forEach(function (t) {
+      var deps = (t.depends || []).filter(function (d) { return ids[d]; });
+      if (!deps.length && buildIdx >= 0) {
+        edges.push({ id: 'be:' + t.id, source: 'p:build', target: 't:' + t.id, sourceHandle: 'r', targetHandle: 'l', type: 'smoothstep', markerEnd: marker });
+      }
+      deps.forEach(function (d) {
+        var active = t.status === 'running';
+        edges.push({ id: 'de:' + d + '>' + t.id, source: 't:' + d, target: 't:' + t.id, sourceHandle: 'r', targetHandle: 'l', type: 'smoothstep', animated: active, markerEnd: marker });
+      });
+    });
+    return { nodes: nodes, edges: edges };
+  }
+
+  function Side(props) {
+    var st = props.st, sel = props.sel;
+    var parts = [];
+    if (sel) {
+      var r = sel.data.ref || {};
+      var rows = [];
+      if (sel.data.task && (r.depends || []).length) {
+        var names = (st.tasks || []).filter(function (t) { return r.depends.indexOf(t.id) >= 0; }).map(function (t) { return t.title || t.id; });
+        rows.push(h('dt', { key: 'dk' }, L('depends')), h('dd', { key: 'dv' }, names.join(', ')));
+      }
+      if (r.note) rows.push(h('dt', { key: 'nk' }, L('note')), h('dd', { key: 'nv' }, r.note));
+      parts.push(h('section', { key: 'sel', className: 'detail' },
+        h('h2', null, L('details')),
+        h('h3', null, sel.data.title),
+        h('span', { className: 'pill ' + (r.status || '') , style: { alignSelf: 'flex-start' } }, L(r.status || 'pending')),
+        r.detail ? h('p', { style: { margin: 0 } }, r.detail) : null,
+        rows.length ? h('dl', { className: 'kv' }, rows) : null,
+        (r.checks || []).length ? h('div', null, h('h2', null, L('checks')), checkList(r.checks)) : null));
+    } else {
+      parts.push(h('p', { key: 'hint', className: 'hint' }, L('select_hint')));
+    }
+    if ((st.checks || []).length) {
+      parts.push(h('section', { key: 'gc' }, h('h2', null, L('checks')), checkList(st.checks)));
+    }
+    var log = (st.log || []).slice(-15).reverse();
+    if (log.length) {
+      parts.push(h('section', { key: 'log' }, h('h2', null, L('activity')),
+        h('ul', { className: 'log' }, log.map(function (e, i) { return h('li', { key: i }, h('time', null, fmtTime(e.t)), e.msg); }))));
+    }
+    return h(React.Fragment, null, parts);
+  }
+  function checkList(list) {
+    return h('ul', { className: 'checks' }, list.map(function (c, i) {
+      var ok = c.exit === 0;
+      return h('li', { key: i }, h('span', { className: 'ex ' + (ok ? 'ok' : 'bad') }, 'exit ' + (c.exit === undefined ? '?' : c.exit)), h('code', null, c.cmd || ''));
+    }));
+  }
+
+  function Canvas() {
+    var s1 = React.useState(current), st = s1[0], setSt = s1[1];
+    var s2 = React.useState(null), selId = s2[0], setSel = s2[1];
+    var rf = RF.useReactFlow();
+    var lastCount = React.useRef(-1);
+    React.useEffect(function () {
+      var fn = function (next) { setSt(next); };
+      listeners.push(fn);
+      return function () { listeners = listeners.filter(function (x) { return x !== fn; }); };
+    }, []);
+    var g = React.useMemo(function () { return st ? layout(st) : { nodes: [], edges: [] }; }, [st]);
+    var nodes = g.nodes.map(function (n) { return n.id === selId ? Object.assign({}, n, { selected: true }) : n; });
+    React.useEffect(function () {
+      if (!st) return;
+      renderHeader(st); checkStale();
+      if (g.nodes.length !== lastCount.current) {
+        lastCount.current = g.nodes.length;
+        setTimeout(function () { rf.fitView({ padding: 0.15, duration: 300 }); }, 30);
+      }
+    }, [st]);
+    var selNode = g.nodes.filter(function (n) { return n.id === selId; })[0] || null;
+    if (!st) return h('div', { className: 'empty' }, L('no_state'));
+    return h(React.Fragment, null,
+      h(RF.ReactFlow, {
+        nodes: nodes, edges: g.edges, nodeTypes: nodeTypes, fitView: true, minZoom: 0.2, maxZoom: 1.8,
+        nodesDraggable: false, nodesConnectable: false,
+        onNodeClick: function (e, n) { if (n.type === 'box') setSel(n.id); },
+        onPaneClick: function () { setSel(null); }
+      }, h(RF.Background, { variant: 'dots', gap: 18, size: 1.3 }), h(RF.Controls, { showInteractive: false })),
+      ReactDOM.createPortal(h(Side, { st: st, sel: selNode }), document.getElementById('side')));
+  }
+
+  ReactDOM.createRoot(document.getElementById('canvas')).render(h(RF.ReactFlowProvider, null, h(Canvas)));
+  poll();
+})();
+</script>
+</body>
+</html>

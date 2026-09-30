@@ -1,0 +1,13 @@
+{
+  "name": "jds-plugins",
+  "description": "JDS's personal Claude Code plugins.",
+  "owner": { "name": "JDS" },
+  "plugins": [
+    {
+      "name": "flow-maker",
+      "description": "Intent to implementation: ready, then go.",
+      "author": { "name": "JDS" },
+      "source": "./flow-maker"
+    }
+  ]
+}

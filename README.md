@@ -8,7 +8,7 @@ JDS의 개인 Claude Code 플러그인 마켓플레이스.
 
 ## 설치
 ```
-/plugin marketplace add C:\AI-agent\Flow-Make\jds-plugins
+/plugin marketplace add wkdeotjr4914/jds-plugins
 /plugin install flow-maker@jds-plugins
 ```
 
